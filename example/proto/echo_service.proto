@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+// Echo Service
+//
+// Echo Service API consists of a single service which returns
+// a message.
+package chapic.example.proto;
+
+import "google/api/annotations.proto";
+import "google/protobuf/field_mask.proto";
+import "google/protobuf/struct.proto";
+
+option go_package = "github.com/fanchunke/chapic/example/proto";
+
+// EchoRequest is the request for echo.
+message EchoRequest {
+  int32 id = 1;
+  string message = 2;
+}
+
+// EchoResponse is the response for echo.
+message EchoResponse {
+  int32 id = 1;
+  string message = 2;
+}
+
+// Echo is the echo service.
+service Echo {
+  // UnaryEcho is unary echo.
+  rpc UnaryEcho(EchoRequest) returns (EchoResponse) {
+    option (google.api.http) = {
+      get: "/v1/example/{id}",
+    };
+  }
+}

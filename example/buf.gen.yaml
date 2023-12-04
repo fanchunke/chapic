@@ -1,0 +1,16 @@
+version: v1
+managed:
+  enabled: true
+  go_package_prefix:
+    default: github.com/fanchunke/chapic/example
+    except:
+      - buf.build/googleapis/googleapis
+plugins:
+  # Use protoc-gen-go at v1.31.0
+  - plugin: buf.build/protocolbuffers/go:v1.31.0
+    out: .
+    opt: paths=source_relative
+  - plugin: go-chapic
+    out: .
+    opt:
+      - paths=source_relative
