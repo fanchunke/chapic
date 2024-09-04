@@ -4,10 +4,10 @@ This is a generator for API client and server libraries for APIs specified by pr
 
 ## Installation
 
-Use `go get` to install the latest version of the generator `protoc-gen-go-chapic`
+Use `go install` to install the latest version of the generator `protoc-gen-go-chapic`
 
 ```shell
-go get github.com/fanchunke/chapic/cmd/protoc-gen-go-chapic
+go install github.com/fanchunke/chapic/cmd/protoc-gen-go-chapic
 ```
 
 ## Usage
@@ -27,6 +27,12 @@ go get github.com/fanchunke/chapic/cmd/protoc-gen-go-chapic
     
     // EchoRequest is the request for echo.
     message EchoRequest {
+      int32 id = 1;  // @gotags: param:"id"
+      string message = 2;  // @gotags: query:"message"
+    }
+   
+    // EchoPostRequest is the request for echo.
+    message EchoPostRequest {
       int32 id = 1;
       string message = 2;
     }
@@ -45,8 +51,19 @@ go get github.com/fanchunke/chapic/cmd/protoc-gen-go-chapic
           get: "/v1/example/{id}",
         };
       }
+   
+      // UnaryEchoPost is unary echo.
+      rpc UnaryEchoPost(EchoPostRequest) returns (EchoResponse) {
+        option (google.api.http) = {
+          post: "/v1/examples",
+          body: "*"
+        };
+      }
     }
     ```
+   
+   **In `.proto` file, we use [protoc-go-inject-tag](https://github.com/favadi/protoc-go-inject-tag) to inject `echo` custom tags for binding.**
+
 
 2. use `buf` generate server and client code
 
@@ -93,39 +110,52 @@ go get github.com/fanchunke/chapic/cmd/protoc-gen-go-chapic
     buf generate
     ```
    
-3. run http server
+3. inject custom tags for binding
+
+   ```shell
+   protoc-go-inject-tag -input="example/proto/*.pb.go"
+   ```
+   
+4. run http server
 
     ```go
     package main
-    
-    import (
-        "context"
-    
-        "github.com/fanchunke/chapic/example/proto"
-        "github.com/labstack/echo/v4"
-    )
-    
-    func main() {
-        e := echo.New()
-    
-        proto.RegisterEchoHTTPServer(e, &EchoService{})
-        e.Logger.Fatal(e.Start(":8000"))
-    }
-    
-    type EchoService struct {
-    }
-    
-    func (e *EchoService) UnaryEcho(ctx context.Context, req *proto.EchoRequest) (*proto.EchoResponse, error) {
+
+   import (
+       "context"
+   
+       "github.com/fanchunke/chapic/example/proto"
+       "github.com/labstack/echo/v4"
+   )
+   
+   func main() {
+       e := echo.New()
+       proto.RegisterEchoHTTPServer(e, &EchoService{})
+       e.Logger.Fatal(e.Start(":8000"))
+   }
+   
+   type EchoService struct {}
+   
+   func (e *EchoService) UnaryEchoPost(ctx context.Context, req *proto.EchoPostRequest) (*proto.EchoResponse, error) {
         resp := &proto.EchoResponse{
             Id:      req.GetId(),
             Message: req.GetMessage(),
         }
         return resp, nil
-    }
-    
+   }
+   
+   func (e *EchoService) UnaryEcho(ctx context.Context, req *proto.EchoRequest) (*proto.EchoResponse, error) {
+        resp := &proto.EchoResponse{
+            Id:      req.GetId(),
+            Message: req.GetMessage(),
+        }
+        return resp, nil
+   }
+
+
     ```
 
-4. test api
+5. test api
 
    ```shell
    curl http://127.0.0.1:8000/v1/example/1\?message\=test
@@ -134,7 +164,7 @@ go get github.com/fanchunke/chapic/cmd/protoc-gen-go-chapic
    {"id":1,"message":"test"}
    ```
 
-5. use client to call http api
+6. use client to call http api
 
    ```go
    package main

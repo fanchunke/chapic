@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"net/http"
 	"regexp"
 	"sort"
 	"strings"
@@ -15,16 +14,13 @@ import (
 )
 
 const (
-	contextPackage       = protogen.GoImportPath("context")
-	fmtPackage           = protogen.GoImportPath("fmt")
-	urlPackage           = protogen.GoImportPath("net/url")
-	protojsonPackage     = protogen.GoImportPath("google.golang.org/protobuf/encoding/protojson")
-	restyPackage         = protogen.GoImportPath("github.com/go-resty/resty/v2")
-	clientOptionPackage  = protogen.GoImportPath("github.com/fanchunke/chapic/option")
-	echoPackage          = protogen.GoImportPath("github.com/labstack/echo/v4")
-	httpPackage          = protogen.GoImportPath("net/http")
-	chapicRuntimePackage = protogen.GoImportPath("github.com/fanchunke/chapic/runtime")
-	strconvPackage       = protogen.GoImportPath("strconv")
+	contextPackage      = protogen.GoImportPath("context")
+	fmtPackage          = protogen.GoImportPath("fmt")
+	urlPackage          = protogen.GoImportPath("net/url")
+	protojsonPackage    = protogen.GoImportPath("google.golang.org/protobuf/encoding/protojson")
+	echoPackage         = protogen.GoImportPath("github.com/labstack/echo/v4")
+	httpPackage         = protogen.GoImportPath("net/http")
+	chapicClientPackage = protogen.GoImportPath("github.com/fanchunke/chapic/client")
 )
 
 const deprecationComment = "// Deprecated: Do not use."
@@ -90,7 +86,6 @@ func (g *generator) generateLeadingComments(loc protoreflect.SourceLocation) {
 func (g *generator) generateImports() {
 	g.gen.P("import (")
 	g.gen.P("echo", " ", echoPackage)
-	g.gen.P("resty", " ", restyPackage)
 	g.gen.P(")")
 	g.gen.P()
 	g.gen.P("var _ = new(", protojsonPackage.Ident("MarshalOptions"), ")")
@@ -127,17 +122,15 @@ func (g *generator) generateServiceClient(service *protogen.Service) {
 func (g *generator) generateClientInterface(service *protogen.Service) {
 	clientName := service.GoName + "HTTPClient"
 	g.gen.P("// ", clientName, " is the client API for ", service.GoName, " service.")
-	g.gen.P("//")
-	g.gen.P("// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.")
 
 	if service.Desc.Options().(*descriptorpb.ServiceOptions).GetDeprecated() {
 		g.gen.P("//")
 		g.gen.P(deprecationComment)
 	}
-	g.gen.Annotate(clientName, service.Location)
+	g.gen.AnnotateSymbol(clientName, protogen.Annotation{Location: service.Location})
 	g.gen.P("type ", clientName, " interface {")
 	for _, method := range service.Methods {
-		g.gen.Annotate(clientName+"."+method.GoName, method.Location)
+		g.gen.AnnotateSymbol(clientName+"."+method.GoName, protogen.Annotation{Location: method.Location})
 		if method.Desc.Options().(*descriptorpb.MethodOptions).GetDeprecated() {
 			g.gen.P(deprecationComment)
 		}
@@ -150,13 +143,9 @@ func (g *generator) generateClientInterface(service *protogen.Service) {
 
 func (g *generator) generateNewClientDefinitions(service *protogen.Service) {
 	clientName := service.GoName + "HTTPClient"
-	g.gen.P("func New", clientName, "(ctx ", contextPackage.Ident("Context"), ", opts ...", clientOptionPackage.Ident("ClientOption"), ") ", "(", clientName, ") {")
-	g.gen.P("o := ", clientOptionPackage.Ident("DefaultOptions"), "()")
-	g.gen.P("for _, opt := range opts {")
-	g.gen.P("opt(o)")
-	g.gen.P("}")
-	g.gen.P("")
-	g.gen.P("return &", unexport(clientName), "{cc: o.HTTPClient, endpoint: o.Endpoint, authFunc: o.AuthFunc,}")
+	g.gen.P("func New", clientName, "(ctx ", contextPackage.Ident("Context"), ", opts ...", chapicClientPackage.Ident("Option"), ") ", "(", clientName, ") {")
+	g.gen.P("c := ", chapicClientPackage.Ident("NewClient"), "(opts...)")
+	g.gen.P("return &", unexport(clientName), "{Client: c}")
 	g.gen.P("}")
 	g.gen.P()
 }
@@ -164,13 +153,7 @@ func (g *generator) generateNewClientDefinitions(service *protogen.Service) {
 func (g *generator) generateClientStruct(service *protogen.Service) {
 	clientName := service.GoName + "HTTPClient"
 	g.gen.P("type ", unexport(clientName), " struct {")
-	g.gen.P("// The http endpoint to connect to.")
-	g.gen.P("endpoint string")
-	g.gen.P("")
-	g.gen.P("// The http client.")
-	g.gen.P("cc *resty.Client")
-	g.gen.P("// The AuthFunc.")
-	g.gen.P("authFunc ", clientOptionPackage.Ident("AuthFunc"))
+	g.gen.P("*", chapicClientPackage.Ident("Client"))
 	g.gen.P("}")
 	g.gen.P()
 }
@@ -178,7 +161,7 @@ func (g *generator) generateClientStruct(service *protogen.Service) {
 func (g *generator) clientSignature(method *protogen.Method) string {
 	s := method.GoName + "(ctx " + g.gen.QualifiedGoIdent(contextPackage.Ident("Context"))
 	if !method.Desc.IsStreamingClient() {
-		s += ", req *" + g.gen.QualifiedGoIdent(method.Input.GoIdent) + ", opts ..." + g.gen.QualifiedGoIdent(clientOptionPackage.Ident("CallOption")) + ") ("
+		s += ", req *" + g.gen.QualifiedGoIdent(method.Input.GoIdent) + ", opts ..." + g.gen.QualifiedGoIdent(chapicClientPackage.Ident("Option")) + ") ("
 	}
 	if !method.Desc.IsStreamingClient() && !method.Desc.IsStreamingServer() {
 		s += "*" + g.gen.QualifiedGoIdent(method.Output.GoIdent)
@@ -209,42 +192,12 @@ func (g *generator) generateClientMethod(method *protogen.Method, index int) {
 func (g *generator) generateRequest(m *protogen.Method) {
 	info := getHTTPInfo(m)
 
-	body := "nil"
 	verb := strings.ToUpper(info.verb)
-	if info.body != "" {
-		if verb == http.MethodGet || verb == http.MethodDelete {
-			panic("invalid use of body parameter for a get/delete method")
-		}
-		g.gen.P("m := protojson.MarshalOptions{EmitUnpopulated: true,}")
-		requestObject := "req"
-		if info.body != "*" {
-			requestObject = "body"
-			g.gen.P(fmt.Sprintf("body := req%s", fieldGetter(info.body)))
-		}
-		g.gen.P("payload, err := m.Marshal(", requestObject, ")")
-		g.gen.P("if err != nil {")
-		g.gen.P("return nil, err")
-		g.gen.P("}")
-		g.gen.P("")
-
-		body = "payload"
-	}
-
-	g.gen.P("resp, err := c.authFunc(c.cc.R()).")
-	if body != "nil" {
-		g.gen.P(fmt.Sprintf("SetBody(string(%s)).", body))
-	}
-	g.gen.P(fmt.Sprintf(`Execute("%s", baseUrl.String())`, verb))
-	g.gen.P("if err != nil {")
+	g.gen.P("var resp ", m.Output.GoIdent)
+	g.gen.P("if err := ", chapicClientPackage.Ident("Request"), "[*", g.gen.QualifiedGoIdent(m.Input.GoIdent), ", *", g.gen.QualifiedGoIdent(m.Output.GoIdent), "]", "(ctx, c.Client, ", "\"", verb, "\"", ", baseUrl.String(), req, &resp, opts...); err != nil {")
 	g.gen.P("return nil, err")
 	g.gen.P("}")
-	g.gen.P("")
-	g.gen.P("var result ", m.Output.GoIdent)
-	g.gen.P("um := protojson.UnmarshalOptions{DiscardUnknown: true,}")
-	g.gen.P("if err := um.Unmarshal(resp.Body(), &result); err != nil {")
-	g.gen.P("return nil, err")
-	g.gen.P("}")
-	g.gen.P("return &result, nil")
+	g.gen.P("return &resp, nil")
 }
 
 var httpPatternVarRegex = regexp.MustCompile(`{([a-zA-Z0-9_.]+?)(=[^{}]+)?}`)
@@ -253,7 +206,7 @@ func (g *generator) generateBaseURL(info *httpInfo) {
 	fmtStr := info.url
 	fmtStr = httpPatternVarRegex.ReplaceAllStringFunc(fmtStr, func(s string) string { return "%v" })
 
-	g.gen.P("baseUrl, err := url.Parse(c.endpoint)")
+	g.gen.P("baseUrl, err := url.Parse(c.Client.BaseURL)")
 	g.gen.P("if err != nil {")
 	g.gen.P("return nil, err")
 	g.gen.P("}")
@@ -621,27 +574,15 @@ func (g *generator) generateMethodHTTPHandler(method *protogen.Method) {
 	service := method.Parent
 	serverName := service.GoName + "HTTPServer"
 	hname := getMethodHTTPHandlerName(method)
-	info := getHTTPInfo(method)
 	if !method.Desc.IsStreamingClient() && !method.Desc.IsStreamingServer() {
 		g.gen.P("func ", hname, "(srv ", serverName, ") echo.HandlerFunc", " {")
 		g.gen.P("return func(c echo.Context) error {")
 		g.gen.P("in := new(", g.gen.QualifiedGoIdent(method.Input.GoIdent), ")")
 
-		// path parameters
-		pathParams := g.pathParams(method)
-		queryParams := g.queryParams(method)
-		if info.body != "" || len(queryParams) > 0 || len(pathParams) > 0 {
-			g.gen.P("pathParams := make(map[string]string, 0)")
-			if len(pathParams) > 0 {
-				g.gen.P("for _, key := range c.ParamNames() {")
-				g.gen.P("pathParams[key] = c.Param(key)")
-				g.gen.P("}")
-			}
-			g.gen.P("if err := ", chapicRuntimePackage.Ident("Bind"), "(in, c.Request(), pathParams); err != nil {")
-			g.gen.P("return echo.NewHTTPError", "(", httpPackage.Ident("StatusBadRequest"), ", echo.Map", `{"error": err}`, ")")
-			g.gen.P("}")
-			g.gen.P()
-		}
+		g.gen.P("if err := c.Bind(in); err != nil {")
+		g.gen.P("return echo.NewHTTPError", "(", httpPackage.Ident("StatusBadRequest"), ", echo.Map", `{"error": err}`, ")")
+		g.gen.P("}")
+		g.gen.P()
 
 		g.gen.P("resp, err := srv.", method.GoName, "(c.Request().Context(), in)")
 		g.gen.P("if err != nil {")

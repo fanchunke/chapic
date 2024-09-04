@@ -14,6 +14,12 @@ option go_package = "github.com/fanchunke/chapic/example/proto";
 
 // EchoRequest is the request for echo.
 message EchoRequest {
+  int32 id = 1; // @gotags: param:"id"
+  string message = 2; // @gotags: query:"message"
+}
+
+// EchoRequest is the request for echo.
+message EchoPostRequest {
   int32 id = 1;
   string message = 2;
 }
@@ -30,6 +36,14 @@ service Echo {
   rpc UnaryEcho(EchoRequest) returns (EchoResponse) {
     option (google.api.http) = {
       get: "/v1/example/{id}",
+    };
+  }
+
+  // UnaryEcho is unary echo.
+  rpc UnaryEchoPost(EchoPostRequest) returns (EchoResponse) {
+    option (google.api.http) = {
+      post: "/v1/examples",
+      body: "*"
     };
   }
 }
